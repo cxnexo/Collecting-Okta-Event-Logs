@@ -120,7 +120,7 @@ Script is already running. Exiting.
 This means another instance is already running. If no process is active, remove the lock manually:
 
 ```bash
-rm lock
+rm okta_events.lock
 ```
 
 2. Invalid config.properties values

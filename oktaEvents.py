@@ -6,7 +6,7 @@ import configparser
 import fcntl
 import os
 
-LOCK_FILE = 'lock'
+LOCK_FILE = 'okta_events.lock'  # New lock file name
 
 def main():
     """ Main function that locks the script and starts the Okta event retrieval process. """
