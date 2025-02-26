@@ -1,28 +1,86 @@
-#Collecting Okta Event Logs for Log Aggregation Tools
+# Collecting Okta Event Logs for Log Aggregation Tools
 
-This Python script will pull Okta logs into a format that is easily parsable by log aggregation tools such as SumoLogic and Splunk. Run it using a cron job or some kind of scheduler. With Sumo Logic you can run this as a script source.
+  This Python script pulls Okta event logs into a structured format suitable for log aggregation tools such as **Sumo Logic, Splunk, and ELK Stack**. The script can be scheduled using a **cron job** or any task scheduler.  
 
-##Key Points About this Script
-- This script will produce a file called "output-<current date>.log".
-- It will bring back at most 1000 entries on each outbound call. 
-- It will continue to call until there aren't anymore event logs to pull.
-- There is a system lock on this script when it is initially started to prevent another process from running this script more than once.
-- It will record the last published date of the log that it collected (stored in startTime.properties) and upon the next time this script is invoked it will retrieve event logs from this published time.
- 
-# Prerequisites
--	You will need Python 2.7
--	You will need the "zc.lockfile" library. Install it using “pip install zc.lockfile”
+## ✨ Features
 
-# Setup
-1. Install the prerequisites.
-2. Add the necessary Okta configuration information inside config.properties.
-3. You can omit the contents for "startime.properties". However, if you would like to have this script start collecting events before the current time, you will need to add the following line by line:
- * YEAR
- * MONTH
- * Day
- * Hour
- * Minute
- * Second
- 
-# Run:
-To run this on its own: "python oktaEvents.py"
+- **Efficient log retrieval** → Fetches Okta logs and stores them in a structured format.
+- **Continuously fetches logs** → Calls the API repeatedly until all new logs are collected.
+- **Resumes from the last processed event** → Saves the last timestamp in `startTime.properties` and resumes fetching from that point.
+- **Prevents duplicate runs** → Uses **file locking** to ensure only one instance runs at a time.
+- **Logs output in a structured format** → Writes logs to `output-YYYY-MM-DD.log` for easy ingestion by monitoring tools.
+
+  ---
+
+## 🔧 Prerequisites
+
+  Before running the script, ensure you have the following:
+
+- **Python 3.x** installed  
+    Check by running:
+
+    ```bash
+    python3 --version
+    ```
+
+- **Required Python libraries**:
+    Install them using:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+### 🔹 Required Libraries
+
+  The script requires:
+
+- `configparser` (built-in with Python 3)
+- `urllib.request` (built-in with Python 3)
+- `fcntl` (for Linux/macOS file locking, built-in)
+- `json` (built-in)
+- `re` (built-in)
+
+  **Optional:** If you are running this on **Windows**, you need to replace `fcntl` with an alternative (e.g., `msvcrt`).
+
+  ---
+
+## ⚙️ Setup Instructions
+
+  1. **Clone this repository** (or download the script):
+
+     ```bash
+     git clone https://github.com/your-repo/okta-event-logs.git
+     cd okta-event-logs
+     ```
+
+  2. **Edit `config.properties`**  
+     Open the `config.properties` file and add your **Okta organization ID** and **API token**:
+
+     ```ini
+     [Config]
+     # Okta organization ID (e.g., my-org)
+     org=<your-org-id>
+
+     # Okta API token for authentication
+     token=<your-api-token>
+
+     # Number of records per API call (max 1000)
+     restRecordLimit=1000
+     ```
+
+  3. **(Optional) Edit `startTime.properties`**  
+     The script automatically generates `startTime.properties` to track the last fetched event.  
+     If you want to **manually specify a start time**, add a timestamp in **ISO 8601 format**:
+
+     ```ini
+     2025-02-26T14:30:45Z
+     ```
+
+  ---
+
+## ▶️ Running the Script
+
+  To manually run the script, execute:
+
+  ```bash
+  python3 okta_events.py

@@ -1,87 +1,116 @@
 import json
 import datetime
-import urllib2
+import urllib.request
 import re
-import ConfigParser
-import zc.lockfile
+import configparser
+import fcntl
+import os
+
+LOCK_FILE = 'lock'
 
 def main():
+    """ Main function that locks the script and starts the Okta event retrieval process. """
+    lock_fd = open(LOCK_FILE, 'w')
+
     try:
-        lock = zc.lockfile.LockFile('lock') # lock the script, so that another process cannot run it
-        print "OKTA Events Script LOCKED " + str(datetime.datetime.now())
-        config = ConfigParser.RawConfigParser()
-        config.readfp(open('config.properties'))
-        org = config.get("Config", "org")
-        token = config.get("Config", "token")
-        restRecordLimit = config.get("Config", "restRecordLimit")
-        runit(org,token,restRecordLimit)
+        # Lock file to prevent multiple executions
+        fcntl.lockf(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        print("OKTA Events Script LOCKED", datetime.datetime.now())
+
+        config = configparser.ConfigParser()
+        config.read('config.properties')
+
+        org = config.get("Config", "org", fallback="")
+        token = config.get("Config", "token", fallback="")
+        rest_record_limit = config.get("Config", "restRecordLimit", fallback="1000")
+
+        validate_config(org, token, rest_record_limit)
+
+        runit(org, token, rest_record_limit)
+
+    except ValueError as e:
+        print(f"CONFIG ERROR: {e}")
+    except IOError:
+        print("Script is already running. Exiting.")
+
     finally:
-        lock.close() # unlock this script
-        print "OKTA Events Script UNLOCKED " + str(datetime.datetime.now())
+        lock_fd.close()
+        os.remove(LOCK_FILE)  # Remove lock file on exit
+        print("OKTA Events Script UNLOCKED", datetime.datetime.now())
 
-def runit(org,token,restRecordLimit):
-    jsonData = getDataFromEndPoint(org,token,getStartTime(),restRecordLimit)
-    writeToFile(jsonData,org,token,restRecordLimit)
+def validate_config(org, token, rest_record_limit):
+    """ Validates the required config parameters before running the script. """
+    if not org or org == "<enter the org id here>":
+        raise ValueError("'org' is missing or not set in config.properties")
+    if not token or token == "<enter your token here>":
+        raise ValueError("'token' is missing or not set in config.properties")
+    if not rest_record_limit.isdigit() or int(rest_record_limit) > 1000:
+        raise ValueError("'restRecordLimit' must be a number (max 1000)")
 
-def getDataFromEndPoint(org,token,startTime,limit):
-    # Since the Okta events cannot have a paging size greater than 1000, this
-    # check is set in place to prevent that
-    if(int(limit) > 1000):
-        limit = '1000'
+def runit(org, token, rest_record_limit):
+    """ Calls Okta API and writes event data to a file. """
+    json_data = get_data_from_endpoint(org, token, get_start_time(), rest_record_limit)
+    write_to_file(json_data, org, token, rest_record_limit)
 
-    url = 'https://' + org + '.oktapreview.com/api/v1/events?startDate=' + startTime + '&limit=' + limit
-    headers = { 'Authorization' : 'SSWS ' + token }
-    request = urllib2.Request(url, None, headers)
-    response = urllib2.urlopen(request)
-    return json.loads(response.read())
+def get_data_from_endpoint(org, token, start_time, limit):
+    """ Retrieves event data from Okta API. """
+    if int(limit) > 1000:
+        limit = "1000"
 
-def getStartTime():
-    timeFormat = ""
-    times = [line.rstrip('\n') for line in open('startTime.properties')]
-    if len(times) > 0:
-        timeFormat = getFormattedTime(times[0], times[1], times[2], times[3], times[4], times[5])
-    if len(times) == 0:
-        offsetTime = getOffsetStartTime()
-        timeFormat = getFormattedTime(offsetTime.strftime('%Y'), offsetTime.strftime('%m'), offsetTime.strftime('%d'), offsetTime.strftime('%H'), offsetTime.strftime('%M'), offsetTime.strftime('%S'))
-    return timeFormat
+    url = f"https://{org}.oktapreview.com/api/v1/events?startDate={start_time}&limit={limit}"
+    headers = {"Authorization": f"SSWS {token}"}
 
-def getFormattedTime(year, month, day, hour, minute, second):
-    return year + "-" + month + "-" + day + "T" + hour + ":" + minute + ":" + second + ".000Z"
+    request = urllib.request.Request(url, headers=headers)
 
-def writeOffsetTimeToFile(year, month, day, hour, minute, seconds):
-    f = open("startTime.properties",'w+')
-    f.write(year + '\n')
-    f.write(month + '\n')
-    f.write(day + '\n')
-    f.write(hour + '\n')
-    f.write(minute + '\n')
-    f.write(seconds + '\n')
-    f.close()
+    try:
+        with urllib.request.urlopen(request) as response:
+            return json.load(response)
+    except urllib.error.URLError as e:
+        print(f"API ERROR: {e}")
+        return []
 
-def getOffsetStartTime():
-    now = datetime.datetime.now();
-    offsetTime = now + datetime.timedelta(0,5) # days, seconds, then other fields.
-    return offsetTime
+def get_start_time():
+    """ Reads last recorded timestamp from startTime.properties or generates a new one. """
+    try:
+        with open('startTime.properties', 'r', encoding="utf-8") as f:
+            timestamp = f.readline().strip()
+        if timestamp:
+            return timestamp  # Directly return the stored ISO format
+    except FileNotFoundError:
+        pass
 
-def writeToFile(jsonData,org,token,restRecordLimit):
-    numberOfRows = 0;
-    lastWrittenPublishedTime = "";
-    fileName = "output-" + str(datetime.datetime.date(datetime.datetime.now())) + ".log"
-    eventLogFile = open(fileName, 'a')
+    # If file doesn't exist, generate a new timestamp
+    offset_time = get_offset_start_time()
+    return offset_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    # this will loop through each of the objects in the JSON list
-    for stuff in jsonData:
-        lastWrittenPublishedTime = stuff['published']
-        eventLogFile.write("Published Time: " + lastWrittenPublishedTime + "\n")
-        json.dump(stuff,eventLogFile)
-        eventLogFile.write("\n")
+def write_offset_time_to_file(year, month, day, hour, minute, second):
+    """ Writes timestamp to startTime.properties in ISO 8601 format. """
+    timestamp = f"{year}-{month}-{day}T{hour}:{minute}:{second}Z"
+    with open("startTime.properties", 'w', encoding="utf-8") as f:
+        f.write(timestamp + "\n")
 
-    match = re.match("(\d{1,4})-(\d{1,2})-(\d{1,2})T(\d{1,2}):(\d{1,2}):(\d{1,2})", lastWrittenPublishedTime)
-    writeOffsetTimeToFile(match.group(1), match.group(2), match.group(3), match.group(4), match.group(5), match.group(6))
+def get_offset_start_time():
+    """ Returns the current time plus a small offset (5 seconds). """
+    now = datetime.datetime.now()
+    return now + datetime.timedelta(seconds=5)
 
-    # Call the endpoint again if the data returned exceeds the limit returned
-    if(numberOfRows > int(restRecordLimit) - 1):
-        runit(org,token,restRecordLimit)
+def write_to_file(json_data, org, token, rest_record_limit):
+    """ Writes retrieved event data to a log file. """
+    last_written_published_time = ""
+    file_name = f"output-{datetime.datetime.now().date()}.log"
 
-# start this off
-main()
+    with open(file_name, 'a', encoding="utf-8") as event_log_file:
+        for event in json_data:
+            last_written_published_time = event['published']
+            event_log_file.write(f"Published Time: {last_written_published_time}\n")
+            json.dump(event, event_log_file, indent=4)
+            event_log_file.write("\n")
+
+    if last_written_published_time:
+        match = re.match(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})", last_written_published_time)
+        if match:
+            write_offset_time_to_file(*match.groups())
+
+# Start script
+if __name__ == "__main__":
+    main()
