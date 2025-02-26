@@ -39,7 +39,7 @@ The script requires:
   1. **Clone this repository** (or download the script):
 
      ```bash
-     git clone https://github.com/your-repo/okta-event-logs.git
+     git clone https://github.com/cxnexo/Collecting-Okta-Event-Logs.git
      cd okta-event-logs
      ```
 
